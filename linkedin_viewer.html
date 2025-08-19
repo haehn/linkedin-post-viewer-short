@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinkedIn Post Viewer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #f3f2ef;
+            color: #333;
+            line-height: 1.6;
+        }
+
+        .header {
+            background: #0a66c2;
+            color: white;
+            padding: 1rem 0;
+            position: sticky;
+            top: 0;
+            z-index: 100;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        }
+
+        .header-content {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 0 2rem;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .header h1 {
+            font-size: 1.5rem;
+            font-weight: 600;
+        }
+
+        .controls {
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+        }
+
+        .file-input-wrapper {
+            position: relative;
+            cursor: pointer;
+        }
+
+        .file-input-wrapper input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+
+        .file-input-label {
+            background: rgba(255,255,255,0.2);
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            border: 1px solid rgba(255,255,255,0.3);
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+
+        .file-input-label:hover {
+            background: rgba(255,255,255,0.3);
+        }
+
+        .search-box {
+            padding: 0.5rem 1rem;
+            border: none;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            width: 250px;
+        }
+
+        .main-content {
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 2rem;
+        }
+
+        .stats {
+            background: white;
+            padding: 1.5rem;
+            border-radius: 12px;
+            margin-bottom: 2rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 1rem;
+            text-align: center;
+        }
+
+        .stat-item {
+            padding: 0.5rem;
+        }
+
+        .stat-number {
+            font-size: 1.5rem;
+            font-weight: bold;
+            color: #0a66c2;
+        }
+
+        .stat-label {
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 0.25rem;
+        }
+
+        .post {
+            background: white;
+            border-radius: 12px;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+            transition: all 0.3s ease;
+            overflow: hidden;
+        }
+
+        .post:hover {
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .post-header {
+            padding: 1.5rem 1.5rem 0;
+            display: flex;
+            align-items: flex-start;
+            gap: 1rem;
+        }
+
+        .post-avatar {
+            width: 48px;
+            height: 48px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #0a66c2, #004182);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: white;
+            font-weight: bold;
+            font-size: 1.2rem;
+            flex-shrink: 0;
+            overflow: hidden;
+            position: relative;
+        }
+
+        .post-avatar img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 50%;
+        }
+
+        .post-avatar-fallback {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background: linear-gradient(135deg, #0a66c2, #004182);
+            color: white;
+            font-weight: bold;
+            font-size: 1.2rem;
+        }
+
+        .post-meta {
+            flex: 1;
+        }
+
+        .post-author {
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 0.25rem;
+        }
+
+        .post-author a {
+            color: #0a66c2;
+            text-decoration: none;
+        }
+
+        .post-author a:hover {
+            text-decoration: underline;
+        }
+
+        .post-title {
+            font-size: 0.9rem;
+            color: #666;
+            margin-bottom: 0.25rem;
+        }
+
+        .post-timestamp {
+            font-size: 0.8rem;
+            color: #999;
+        }
+
+        .post-content {
+            padding: 1rem 1.5rem;
+        }
+
+        .post-text {
+            line-height: 1.6;
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .post-media {
+            margin-top: 1rem;
+        }
+
+        .media-grid {
+            display: grid;
+            gap: 0.5rem;
+            border-radius: 8px;
+            overflow: hidden;
+        }
+
+        .media-grid.single {
+            grid-template-columns: 1fr;
+        }
+
+        .media-grid.double {
+            grid-template-columns: 1fr 1fr;
+        }
+
+        .media-grid.triple {
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+        }
+
+        .media-grid.triple .media-item:first-child {
+            grid-row: 1 / 3;
+        }
+
+        .media-grid.quad {
+            grid-template-columns: 1fr 1fr;
+            grid-template-rows: 1fr 1fr;
+        }
+
+        .media-item {
+            position: relative;
+            overflow: hidden;
+            background: #f0f0f0;
+            min-height: 200px;
+            cursor: pointer;
+            transition: transform 0.2s ease;
+        }
+
+        .media-item:hover {
+            transform: scale(1.02);
+        }
+
+        .media-item img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            display: block;
+        }
+
+        .post-actions {
+            padding: 0 1.5rem 1.5rem;
+            display: flex;
+            gap: 1rem;
+        }
+
+        .action-btn {
+            padding: 0.5rem 1rem;
+            border: 1px solid #ddd;
+            background: #f8f9fa;
+            border-radius: 20px;
+            text-decoration: none;
+            color: #666;
+            font-size: 0.9rem;
+            transition: all 0.3s ease;
+        }
+
+        .action-btn:hover {
+            background: #0a66c2;
+            color: white;
+            border-color: #0a66c2;
+        }
+
+        .no-posts {
+            text-align: center;
+            padding: 4rem 2rem;
+            color: #666;
+        }
+
+        .no-posts h2 {
+            margin-bottom: 1rem;
+            color: #333;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 2rem;
+            color: #666;
+        }
+
+        .error {
+            background: #fff5f5;
+            border: 1px solid #fed7d7;
+            color: #c53030;
+            padding: 1rem;
+            border-radius: 8px;
+            margin-bottom: 1rem;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .header-content {
+                flex-direction: column;
+                gap: 1rem;
+                text-align: center;
+            }
+
+            .controls {
+                flex-direction: column;
+                width: 100%;
+            }
+
+            .search-box {
+                width: 100%;
+            }
+
+            .main-content {
+                padding: 0 1rem;
+            }
+
+            .stats {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .post-header {
+                padding: 1rem 1rem 0;
+            }
+
+            .post-content {
+                padding: 1rem;
+            }
+
+            .post-actions {
+                padding: 0 1rem 1rem;
+                flex-wrap: wrap;
+            }
+
+            .media-grid.double,
+            .media-grid.triple,
+            .media-grid.quad {
+                grid-template-columns: 1fr;
+                grid-template-rows: auto;
+            }
+
+            .media-grid.triple .media-item:first-child {
+                grid-row: auto;
+            }
+        }
+
+        /* Modal for media viewing */
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0,0,0,0.9);
+        }
+
+        .modal-content {
+            margin: auto;
+            display: block;
+            width: 80%;
+            max-width: 700px;
+            max-height: 80%;
+            object-fit: contain;
+            margin-top: 5%;
+        }
+
+        .close {
+            position: absolute;
+            top: 15px;
+            right: 35px;
+            color: #f1f1f1;
+            font-size: 40px;
+            font-weight: bold;
+            cursor: pointer;
+        }
+
+        .close:hover {
+            color: #bbb;
+        }
+    </style>
+</head>
+<body>
+    <div class="header">
+        <div class="header-content">
+            <h1>LinkedIn Post Viewer</h1>
+            <div class="controls">
+                <div class="file-input-wrapper">
+                    <input type="file" id="fileInput" accept=".json" />
+                    <label for="fileInput" class="file-input-label">Load JSON File</label>
+                </div>
+                <input type="text" id="searchBox" class="search-box" placeholder="Search posts..." />
+            </div>
+        </div>
+    </div>
+
+    <div class="main-content">
+        <div id="stats" class="stats" style="display: none;">
+            <div class="stat-item">
+                <div class="stat-number" id="totalPosts">0</div>
+                <div class="stat-label">Total Posts</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number" id="totalMedia">0</div>
+                <div class="stat-label">Media Files</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number" id="totalChars">0</div>
+                <div class="stat-label">Characters</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number" id="avgLength">0</div>
+                <div class="stat-label">Avg Length</div>
+            </div>
+        </div>
+
+        <div id="errorContainer"></div>
+        <div id="postsContainer">
+            <div class="no-posts">
+                <h2>Welcome to LinkedIn Post Viewer</h2>
+                <p>Load a JSON file to view LinkedIn posts with proper time ordering.</p>
+                <p>Click "Load JSON File" above to get started.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for viewing images -->
+    <div id="imageModal" class="modal">
+        <span class="close">&times;</span>
+        <img class="modal-content" id="modalImage">
+    </div>
+
+    <script>
+        let allPosts = {};
+        let filteredPosts = {};
+
+        // Initialize the application
+        document.addEventListener('DOMContentLoaded', function() {
+            setupEventListeners();
+            
+            // Try to load from URL parameter or default file
+            const urlParams = new URLSearchParams(window.location.search);
+            const dataFile = urlParams.get('data') || 'posts.json';
+            
+            // Try to load default data file
+            loadDefaultData(dataFile);
+        });
+
+        function setupEventListeners() {
+            // File input handler
+            document.getElementById('fileInput').addEventListener('change', handleFileSelect);
+            
+            // Search functionality
+            document.getElementById('searchBox').addEventListener('input', handleSearch);
+            
+            // Modal close handler
+            document.querySelector('.close').addEventListener('click', closeModal);
+            document.getElementById('imageModal').addEventListener('click', function(e) {
+                if (e.target === this) closeModal();
+            });
+            
+            // Escape key to close modal
+            document.addEventListener('keydown', function(e) {
+                if (e.key === 'Escape') closeModal();
+            });
+        }
+
+        async function loadDefaultData(filename) {
+            try {
+                const response = await fetch(filename);
+                if (response.ok) {
+                    const data = await response.json();
+                    processData(data);
+                }
+            } catch (error) {
+                console.log('No default data file found, waiting for user upload');
+            }
+        }
+
+        function handleFileSelect(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            if (!file.name.endsWith('.json')) {
+                showError('Please select a JSON file');
+                return;
+            }
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = JSON.parse(e.target.result);
+                    processData(data);
+                    clearError();
+                } catch (error) {
+                    showError('Error parsing JSON file: ' + error.message);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        function processData(data) {
+            allPosts = data;
+            
+            // Convert to array and sort by timestamp
+            const postsArray = Object.values(data);
+            postsArray.sort((a, b) => {
+                const timeA = new Date(a.timestamp || 0);
+                const timeB = new Date(b.timestamp || 0);
+                return timeB - timeA; // Newest first
+            });
+
+            // Rebuild numbered object
+            filteredPosts = {};
+            postsArray.forEach((post, index) => {
+                filteredPosts[index] = post;
+            });
+
+            updateStats();
+            renderPosts();
+        }
+
+        function updateStats() {
+            const posts = Object.values(filteredPosts);
+            const totalPosts = posts.length;
+            const totalMedia = posts.reduce((sum, post) => sum + (post.media?.length || 0), 0);
+            const totalChars = posts.reduce((sum, post) => sum + (post.text?.length || 0), 0);
+            const avgLength = totalPosts > 0 ? Math.round(totalChars / totalPosts) : 0;
+
+            document.getElementById('totalPosts').textContent = totalPosts;
+            document.getElementById('totalMedia').textContent = totalMedia;
+            document.getElementById('totalChars').textContent = totalChars.toLocaleString();
+            document.getElementById('avgLength').textContent = avgLength;
+
+            document.getElementById('stats').style.display = totalPosts > 0 ? 'grid' : 'none';
+        }
+
+        function renderPosts() {
+            const container = document.getElementById('postsContainer');
+            const posts = Object.values(filteredPosts);
+
+            if (posts.length === 0) {
+                container.innerHTML = `
+                    <div class="no-posts">
+                        <h2>No posts found</h2>
+                        <p>Try adjusting your search or loading a different file.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = posts.map(post => createPostHTML(post)).join('');
+
+            // Add click handlers for media
+            document.querySelectorAll('.media-item img').forEach(img => {
+                img.addEventListener('click', () => openModal(img.src));
+            });
+        }
+
+        function createPostHTML(post) {
+            const author = post.author || {};
+            const authorInitials = getInitials(author.name || 'Unknown');
+            const timestamp = formatTimestamp(post.timestamp);
+            const mediaHTML = createMediaHTML(post.media || []);
+            const avatarHTML = createAvatarHTML(author, authorInitials);
+
+            return `
+                <div class="post">
+                    <div class="post-header">
+                        <div class="post-avatar">${avatarHTML}</div>
+                        <div class="post-meta">
+                            <div class="post-author">
+                                ${author.profile_url ? 
+                                    `<a href="${author.profile_url}" target="_blank">${author.name || 'Unknown'}</a>` : 
+                                    (author.name || 'Unknown')
+                                }
+                            </div>
+                            ${author.title ? `<div class="post-title">${author.title}</div>` : ''}
+                            <div class="post-timestamp">${timestamp}</div>
+                        </div>
+                    </div>
+                    <div class="post-content">
+                        ${post.text ? `<div class="post-text">${escapeHtml(post.text)}</div>` : ''}
+                        ${mediaHTML}
+                    </div>
+                    <div class="post-actions">
+                        ${post.original ? `<a href="${post.original}" target="_blank" class="action-btn">View Original</a>` : ''}
+                        <button class="action-btn" onclick="sharePost('${post.original || ''}')">Share</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function createAvatarHTML(author, fallbackInitials) {
+            // Try to extract profile picture URL from profile_url or use a common pattern
+            let avatarSrc = null;
+            
+            // If we have a profile URL, try to construct the profile picture URL
+            if (author.profile_url) {
+                // Extract LinkedIn profile ID from URL
+                const profileMatch = author.profile_url.match(/\/in\/([^\/\?]+)/);
+                if (profileMatch) {
+                    const profileId = profileMatch[1];
+                    // Use LinkedIn's public profile picture API (may not always work due to privacy settings)
+                    avatarSrc = `https://media.licdn.com/dms/image/v2/profile-displayphoto-shrink_100_100/0/default-member-img_100_100.png`;
+                }
+            }
+
+            // Check if author object has a direct avatar/photo URL
+            if (author.avatar_url || author.photo_url || author.profile_image_url) {
+                avatarSrc = author.avatar_url || author.photo_url || author.profile_image_url;
+            }
+
+            if (avatarSrc) {
+                return `
+                    <img src="${avatarSrc}" alt="${author.name || 'Profile'}" 
+                         onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
+                    <div class="post-avatar-fallback" style="display: none;">${fallbackInitials}</div>
+                `;
+            } else {
+                // Fallback to initials
+                return `<div class="post-avatar-fallback">${fallbackInitials}</div>`;
+            }
+        }
+
+        function createMediaHTML(mediaArray) {
+            if (!mediaArray || mediaArray.length === 0) return '';
+
+            const gridClass = getMediaGridClass(mediaArray.length);
+            const mediaItems = mediaArray.map(url => `
+                <div class="media-item">
+                    <img src="${url}" alt="Post media" loading="lazy" onerror="this.style.display='none'">
+                </div>
+            `).join('');
+
+            return `
+                <div class="post-media">
+                    <div class="media-grid ${gridClass}">
+                        ${mediaItems}
+                    </div>
+                </div>
+            `;
+        }
+
+        function getMediaGridClass(count) {
+            switch (count) {
+                case 1: return 'single';
+                case 2: return 'double';
+                case 3: return 'triple';
+                default: return 'quad';
+            }
+        }
+
+        function getInitials(name) {
+            return name
+                .split(' ')
+                .map(word => word[0])
+                .join('')
+                .toUpperCase()
+                .slice(0, 2);
+        }
+
+        function formatTimestamp(timestamp) {
+            if (!timestamp) return 'Unknown date';
+            
+            try {
+                const date = new Date(timestamp);
+                const now = new Date();
+                const diffMs = now - date;
+                const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+                if (diffDays === 0) {
+                    return 'Today at ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                } else if (diffDays === 1) {
+                    return 'Yesterday at ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
+                } else if (diffDays < 7) {
+                    return `${diffDays} days ago`;
+                } else {
+                    return date.toLocaleDateString();
+                }
+            } catch (error) {
+                return 'Invalid date';
+            }
+        }
+
+        function handleSearch(event) {
+            const query = event.target.value.toLowerCase().trim();
+            
+            if (!query) {
+                filteredPosts = allPosts;
+            } else {
+                filteredPosts = {};
+                let index = 0;
+                
+                Object.values(allPosts).forEach(post => {
+                    const searchableText = [
+                        post.text || '',
+                        post.author?.name || '',
+                        post.author?.title || ''
+                    ].join(' ').toLowerCase();
+                    
+                    if (searchableText.includes(query)) {
+                        filteredPosts[index++] = post;
+                    }
+                });
+            }
+            
+            updateStats();
+            renderPosts();
+        }
+
+        function openModal(imageSrc) {
+            document.getElementById('modalImage').src = imageSrc;
+            document.getElementById('imageModal').style.display = 'block';
+        }
+
+        function closeModal() {
+            document.getElementById('imageModal').style.display = 'none';
+        }
+
+        function sharePost(url) {
+            if (navigator.share && url) {
+                navigator.share({
+                    title: 'LinkedIn Post',
+                    url: url
+                });
+            } else if (url) {
+                navigator.clipboard.writeText(url).then(() => {
+                    alert('Post URL copied to clipboard!');
+                });
+            } else {
+                alert('No URL available for this post');
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function showError(message) {
+            document.getElementById('errorContainer').innerHTML = `
+                <div class="error">${message}</div>
+            `;
+        }
+
+        function clearError() {
+            document.getElementById('errorContainer').innerHTML = '';
+        }
+    </script>
+</body>
+</html>
