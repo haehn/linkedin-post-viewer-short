@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-LinkedIn Post Scraper with Timestamps
-A single-file LinkedIn post scraper that extracts posts from multiple profiles/pages
-and outputs structured JSON data with timestamps for proper ordering.
+LinkedIn Post Scraper with Timestamps - No Reposts Version
+A single-file LinkedIn post scraper that extracts only original posts (no reposts/shares)
+from multiple profiles/pages and outputs structured JSON data with timestamps.
 
 Usage:
     python scrape_linkedin_posts.py -c "https://www.linkedin.com/in/haehn/recent-activity/all/,https://www.linkedin.com/company/100647235/admin/page-posts/published/" -o posts.json
@@ -129,6 +129,21 @@ def login_linkedin(driver, email=None, password=None):
         return False
 
 
+def get_profile_name_from_url(url):
+    """Extract the expected profile name from LinkedIn URL."""
+    try:
+        # First try to get the profile username/slug from URL
+        if '/in/' in url:
+            profile_slug = url.split('/in/')[1].split('/')[0]
+            return profile_slug
+        elif '/company/' in url:
+            company_id = url.split('/company/')[1].split('/')[0]
+            return company_id
+        return None
+    except Exception:
+        return None
+
+
 def normalize_linkedin_url(url):
     """Convert any LinkedIn profile URL to the posts activity URL."""
     url = url.rstrip('/')
@@ -200,7 +215,6 @@ def extract_post_timestamp(post_element):
         '.update-components-actor__sub-description time',
         '.feed-shared-actor__sub-description time',
         '.update-components-actor__meta time',
-        'span.visually-hidden:contains("ago")',
         '.feed-shared-actor__sub-description',
         '.update-components-actor__sub-description'
     ]
@@ -247,6 +261,86 @@ def extract_post_timestamp(post_element):
     
     # Ultimate fallback
     return datetime.now().isoformat()
+
+
+def is_repost_or_share(post_element, expected_profile_info=None):
+    """
+    Detect if a post is a repost/share by comparing the post author 
+    with the expected profile being scraped.
+    Returns True if it's a repost, False if it's an original post.
+    """
+    try:
+        if not expected_profile_info:
+            # Fallback to basic detection if no profile info provided
+            return False
+        
+        # Extract the author name from this specific post
+        post_author_name = ""
+        name_selectors = [
+            '.update-components-actor__name',
+            '.feed-shared-actor__name',
+            '.update-components-actor__title'
+        ]
+        
+        for selector in name_selectors:
+            try:
+                name_element = post_element.find_element(By.CSS_SELECTOR, selector)
+                post_author_name = name_element.text.strip()
+                if post_author_name:
+                    break
+            except NoSuchElementException:
+                continue
+        
+        # If we couldn't get the post author name, assume it's original
+        if not post_author_name:
+            return False
+        
+        # Clean up author names for comparison
+        def clean_name(name):
+            # Remove common LinkedIn suffixes and formatting
+            cleaned = name.lower().strip()
+            # Remove things like "• 3rd+", "Verified", connection degree indicators
+            cleaned = re.sub(r'[•·]\s*(1st|2nd|3rd\+?|verified).*$', '', cleaned)
+            cleaned = re.sub(r'\s*(1st|2nd|3rd\+?|verified).*$', '', cleaned)
+            cleaned = re.sub(r'\s+', ' ', cleaned)  # Normalize whitespace
+            return cleaned.strip()
+        
+        expected_name_clean = clean_name(expected_profile_info.get('name', ''))
+        post_author_clean = clean_name(post_author_name)
+        
+        # Compare the names
+        if expected_name_clean and post_author_clean:
+            # Check if names match (allowing for some variation)
+            if expected_name_clean == post_author_clean:
+                return False  # Same author, it's an original post
+            
+            # Check if one name contains the other (handles cases where one might be shortened)
+            if (expected_name_clean in post_author_clean or 
+                post_author_clean in expected_name_clean):
+                return False  # Likely same person, it's an original post
+            
+            # Different authors - this is a repost/share
+            print(f"    Author mismatch: Expected '{expected_name_clean}', Found '{post_author_clean}'")
+            return True
+        
+        # Additional check: look for clear repost indicators in text
+        post_text = post_element.text.lower()
+        clear_repost_indicators = [
+            'reposted this',
+            'shared this',
+            'originally posted by'
+        ]
+        
+        for indicator in clear_repost_indicators:
+            if indicator in post_text:
+                return True
+        
+        return False
+        
+    except Exception as e:
+        print(f"    Warning: Error detecting repost: {e}")
+        # If we can't determine, assume it's original
+        return False
 
 
 def extract_post_url_from_element(post_element):
@@ -313,6 +407,57 @@ def extract_media_urls(post_element):
     return media_urls
 
 
+def clean_author_name(raw_name):
+    """Clean up author name by removing duplicates and LinkedIn formatting."""
+    if not raw_name:
+        return ""
+    
+    # Split by newlines and common separators
+    parts = re.split(r'[\n\r]+', raw_name)
+    
+    # Take the first non-empty part as the main name
+    main_name = ""
+    for part in parts:
+        cleaned_part = part.strip()
+        # Skip connection indicators and verification badges
+        if cleaned_part and not re.match(r'^[•·]\s*(1st|2nd|3rd\+?|verified)', cleaned_part.lower()):
+            if not main_name:
+                main_name = cleaned_part
+            elif cleaned_part.lower() == main_name.lower():
+                # Skip duplicate names
+                continue
+            else:
+                # If it's a different name part, it might be additional info we don't want
+                break
+    
+    # Remove connection degree indicators and verification badges
+    main_name = re.sub(r'[•·]\s*(1st|2nd|3rd\+?|verified).*$', '', main_name, flags=re.IGNORECASE)
+    main_name = re.sub(r'\s*(1st|2nd|3rd\+?|verified).*$', '', main_name, flags=re.IGNORECASE)
+    
+    return main_name.strip()
+
+
+def clean_author_title(raw_title):
+    """Clean up author title by removing duplicates."""
+    if not raw_title:
+        return ""
+    
+    # Split by newlines
+    parts = re.split(r'[\n\r]+', raw_title)
+    
+    # Take the first non-empty part and remove duplicates
+    seen_parts = set()
+    cleaned_parts = []
+    
+    for part in parts:
+        cleaned_part = part.strip()
+        if cleaned_part and cleaned_part.lower() not in seen_parts:
+            seen_parts.add(cleaned_part.lower())
+            cleaned_parts.append(cleaned_part)
+    
+    return ' | '.join(cleaned_parts) if len(cleaned_parts) > 1 else (cleaned_parts[0] if cleaned_parts else "")
+
+
 def extract_author_info(post_element):
     """Extract author information from a post element."""
     author_info = {
@@ -333,8 +478,10 @@ def extract_author_info(post_element):
         for selector in name_selectors:
             try:
                 name_element = post_element.find_element(By.CSS_SELECTOR, selector)
-                author_info['name'] = name_element.text.strip()
-                if author_info['name']:
+                raw_name = name_element.text.strip()
+                if raw_name:
+                    # Clean up the author name
+                    author_info['name'] = clean_author_name(raw_name)
                     break
             except NoSuchElementException:
                 continue
@@ -375,8 +522,10 @@ def extract_author_info(post_element):
         for selector in title_selectors:
             try:
                 title_element = post_element.find_element(By.CSS_SELECTOR, selector)
-                author_info['title'] = title_element.text.strip()
-                if author_info['title']:
+                raw_title = title_element.text.strip()
+                if raw_title:
+                    # Clean up the title
+                    author_info['title'] = clean_author_title(raw_title)
                     break
             except NoSuchElementException:
                 continue
@@ -468,6 +617,62 @@ def scrape_linkedin_channel(driver, channel_url, max_posts=50, scroll_count=10):
         print("  ⚠ Profile appears to have no visible posts or is private")
         return []
 
+    # Get the expected profile information for comparison
+    expected_profile_info = {'name': '', 'url_slug': ''}
+    
+    try:
+        # Extract profile name from the page
+        profile_name_selectors = [
+            'h1.text-heading-xlarge',
+            'h1.pv-text-details__left-panel__entity-title',
+            '.pv-text-details__left-panel h1',
+            'h1[data-anonymize="person-name"]',
+            '.ph5 h1'
+        ]
+        
+        for selector in profile_name_selectors:
+            try:
+                name_element = WebDriverWait(driver, 5).until(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                )
+                expected_profile_info['name'] = name_element.text.strip()
+                if expected_profile_info['name']:
+                    print(f"  Profile name detected: {expected_profile_info['name']}")
+                    break
+            except (TimeoutException, NoSuchElementException):
+                continue
+        
+        # Extract URL slug as backup
+        expected_profile_info['url_slug'] = get_profile_name_from_url(channel_url)
+        
+        # If we couldn't get profile name from page, try to navigate to main profile
+        if not expected_profile_info['name']:
+            try:
+                # Go to main profile page to get the name
+                main_profile_url = channel_url.split('/recent-activity')[0] if '/recent-activity' in channel_url else channel_url
+                driver.get(main_profile_url)
+                time.sleep(3)
+                
+                for selector in profile_name_selectors:
+                    try:
+                        name_element = WebDriverWait(driver, 5).until(
+                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
+                        )
+                        expected_profile_info['name'] = name_element.text.strip()
+                        if expected_profile_info['name']:
+                            print(f"  Profile name detected: {expected_profile_info['name']}")
+                            # Go back to activity page
+                            driver.get(posts_url)
+                            time.sleep(2)
+                            break
+                    except (TimeoutException, NoSuchElementException):
+                        continue
+            except Exception as e:
+                print(f"  Warning: Could not get profile name from main page: {e}")
+        
+    except Exception as e:
+        print(f"  Warning: Could not extract profile info: {e}")
+
     # Scroll to load more posts
     print(f"  Scrolling {scroll_count} times to load posts...")
     for i in range(scroll_count):
@@ -498,11 +703,18 @@ def scrape_linkedin_channel(driver, channel_url, max_posts=50, scroll_count=10):
     # Extract content from posts
     extracted_posts = []
     posts_to_process = min(len(all_posts), max_posts)
+    reposts_skipped = 0
     
-    print(f"  Processing {posts_to_process} posts...")
+    print(f"  Processing {posts_to_process} posts (filtering out reposts)...")
     
     for i, post_element in enumerate(all_posts[:posts_to_process]):
         try:
+            # Skip reposts/shares by comparing authors
+            if is_repost_or_share(post_element, expected_profile_info):
+                reposts_skipped += 1
+                print(f"    Skipping repost {i+1}")
+                continue
+            
             post_data = extract_post_content(post_element, i + 1)
             
             # Only include posts with content or media
@@ -515,14 +727,14 @@ def scrape_linkedin_channel(driver, channel_url, max_posts=50, scroll_count=10):
             print(f"    Error processing post {i+1}: {e}")
             continue
 
-    print(f"  ✓ Successfully extracted {len(extracted_posts)} posts")
+    print(f"  ✓ Successfully extracted {len(extracted_posts)} original posts ({reposts_skipped} reposts skipped)")
     return extracted_posts
 
 
 def main():
     """Main function to handle CLI arguments and orchestrate scraping."""
     parser = argparse.ArgumentParser(
-        description='LinkedIn Post Scraper - Extract posts from LinkedIn profiles/pages with timestamps',
+        description='LinkedIn Post Scraper - Extract only original posts (no reposts) with timestamps',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Examples:
@@ -583,11 +795,12 @@ Examples:
         print("Error: No valid channel URLs provided")
         sys.exit(1)
 
-    print(f"LinkedIn Post Scraper v2.0 (with timestamps)")
+    print(f"LinkedIn Post Scraper v2.1 (Original posts only)")
     print(f"Channels to scrape: {len(channel_urls)}")
     print(f"Max posts per channel: {args.max_posts}")
     print(f"Output file: {args.output}")
     print(f"Headless mode: {args.headless}")
+    print(f"Filter: Only original posts (reposts will be skipped)")
 
     # Setup driver
     driver = setup_driver(headless=args.headless)
@@ -628,21 +841,22 @@ Examples:
             with open(args.output, 'w', encoding='utf-8') as f:
                 json.dump(numbered_posts, f, indent=2, ensure_ascii=False)
             
-            print(f"✓ Successfully saved {len(numbered_posts)} posts to {args.output}")
+            print(f"✓ Successfully saved {len(numbered_posts)} original posts to {args.output}")
             
             # Print summary
             total_media = sum(len(post.get('media', [])) for post in numbered_posts.values())
             total_text_length = sum(len(post.get('text', '')) for post in numbered_posts.values())
             
             print(f"\nSUMMARY:")
-            print(f"  Total posts: {len(numbered_posts)}")
+            print(f"  Original posts only: {len(numbered_posts)}")
             print(f"  Total media files: {total_media}")
             print(f"  Total text length: {total_text_length} characters")
             print(f"  Average post length: {total_text_length // len(numbered_posts) if numbered_posts else 0} characters")
             print(f"  Posts sorted by: timestamp (newest first)")
+            print(f"  Filtering: Reposts and shares excluded")
             
         else:
-            print("⚠ No posts were extracted")
+            print("⚠ No original posts were extracted")
             # Create empty JSON file
             with open(args.output, 'w', encoding='utf-8') as f:
                 json.dump({}, f)
