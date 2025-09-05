@@ -115,13 +115,14 @@ chromedriver --version
 ```bash
 # Basic usage - scrape a single profile
 python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/in/username/" -o posts.json
+python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/company/123/" -o posts.json
 
 # Scrape multiple profiles/pages
 python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/in/user1/,https://www.linkedin.com/company/123/" -o posts.json
 
 # Advanced options
 python3 scrape_linkedin_posts.py \
-  -c "https://www.linkedin.com/in/haehn/" \
+  -c "https://www.linkedin.com/in/username/" \
   -o my_posts.json \
   --max-posts 100 \
   --scrolls 15 \
