@@ -116,6 +116,7 @@ chromedriver --version
 # Basic usage - scrape a single profile
 python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/in/username/" -o posts.json
 python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/company/123/" -o posts.json
+python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/in/username/,https://www.linkedin.com/company/123/posts/?feedView=all" -o posts.json
 
 # Scrape multiple profiles/pages
 python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/in/user1/,https://www.linkedin.com/company/123/" -o posts.json
@@ -151,6 +152,9 @@ https://www.linkedin.com/in/username/
 # Company pages:
 https://www.linkedin.com/company/company-id/posts/
 https://www.linkedin.com/company/company-id/
+
+# Both
+python3 scrape_linkedin_posts.py -c "https://www.linkedin.com/in/username/,https://www.linkedin.com/company/123/posts/?feedView=all" -o posts.json
 ```
 
 ### Step 2: View Posts
