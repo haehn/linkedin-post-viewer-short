@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-LinkedIn Post Scraper with Timestamps - No Reposts Version
+LinkedIn Post Scraper with Timestamps - No Reposts Version (Fixed Company URL Handling)
 A single-file LinkedIn post scraper that extracts only original posts (no reposts/shares)
 from multiple profiles/pages and outputs structured JSON data with timestamps.
 
 Usage:
-    python scrape_linkedin_posts.py -c "https://www.linkedin.com/in/haehn/recent-activity/all/,https://www.linkedin.com/company/100647235/admin/page-posts/published/" -o posts.json
+    python scrape_linkedin_posts.py -c "https://www.linkedin.com/in/haehn/recent-activity/all/,https://www.linkedin.com/company/mpsych/posts/?feedView=all&viewAsMember=true" -o posts.json
 
 Requirements:
     pip install selenium beautifulsoup4 requests argparse
@@ -19,7 +19,7 @@ import sys
 import os
 import re
 from datetime import datetime, timedelta
-from urllib.parse import urlparse, urljoin
+from urllib.parse import urlparse, urljoin, parse_qs, urlunparse
 
 # Selenium imports
 from selenium import webdriver
@@ -145,24 +145,50 @@ def get_profile_name_from_url(url):
 
 
 def normalize_linkedin_url(url):
-    """Convert any LinkedIn profile URL to the posts activity URL."""
+    """Convert any LinkedIn profile URL to the posts activity URL, preserving query parameters."""
     url = url.rstrip('/')
     
+    # Parse the URL to separate the base URL from query parameters
+    parsed_url = urlparse(url)
+    base_url = f"{parsed_url.scheme}://{parsed_url.netloc}{parsed_url.path}"
+    query_params = parsed_url.query
+    
     # Handle different LinkedIn URL formats
-    if '/recent-activity' in url:
-        if not url.endswith('/all/'):
-            base_url = url.split('/recent-activity')[0]
-            return f"{base_url}/recent-activity/all/"
-        return url
-    elif '/company/' in url:
-        if '/admin/page-posts' in url:
-            return url
-        # For company pages, try to get posts feed
-        company_id = url.split('/company/')[1].split('/')[0]
-        return f"https://www.linkedin.com/company/{company_id}/posts/"
+    if '/recent-activity' in base_url:
+        if not base_url.endswith('/all/'):
+            base_url = base_url.split('/recent-activity')[0] + '/recent-activity/all/'
+        # Reconstruct with query parameters
+        if query_params:
+            return f"{base_url}?{query_params}"
+        return base_url
+    elif '/company/' in base_url:
+        if '/posts' in base_url:
+            # Company posts URL - preserve it as is, just ensure it ends properly
+            if not base_url.endswith('/posts/') and not base_url.endswith('/posts'):
+                if base_url.endswith('/'):
+                    base_url = base_url + 'posts/'
+                else:
+                    base_url = base_url + '/posts/'
+            elif base_url.endswith('/posts'):
+                base_url = base_url + '/'
+            
+            # Reconstruct with query parameters - THIS IS KEY FOR COMPANY PAGES
+            if query_params:
+                return f"{base_url}?{query_params}"
+            return base_url
+        else:
+            # For company pages without /posts, try to get posts feed
+            company_id = base_url.split('/company/')[1].split('/')[0]
+            posts_url = f"https://www.linkedin.com/company/{company_id}/posts/"
+            if query_params:
+                return f"{posts_url}?{query_params}"
+            return posts_url
     else:
         # Regular profile URL
-        return f"{url}/recent-activity/all/"
+        posts_url = f"{base_url}/recent-activity/all/"
+        if query_params:
+            return f"{posts_url}?{query_params}"
+        return posts_url
 
 
 def parse_relative_time(time_text):
@@ -185,7 +211,7 @@ def parse_relative_time(time_text):
     amount = int(match.group(1))
     unit = match.group(2)
     
-    # Convert to timedelta
+    # Convert to timedelta with more accurate calculations
     if unit.startswith('s'):  # seconds
         delta = timedelta(seconds=amount)
     elif unit.startswith('m') and 'mo' not in unit:  # minutes
@@ -196,20 +222,82 @@ def parse_relative_time(time_text):
         delta = timedelta(days=amount)
     elif unit.startswith('w'):  # weeks
         delta = timedelta(weeks=amount)
-    elif 'mo' in unit:  # months
-        delta = timedelta(days=amount * 30)  # Approximate
-    elif unit.startswith('y'):  # years
-        delta = timedelta(days=amount * 365)  # Approximate
+    elif 'mo' in unit:  # months - more accurate calculation
+        # Instead of 30 days per month, calculate actual months back
+        target_date = now
+        for _ in range(amount):
+            # Go back one month
+            if target_date.month == 1:
+                target_date = target_date.replace(year=target_date.year - 1, month=12)
+            else:
+                # Handle month-end edge cases
+                new_month = target_date.month - 1
+                try:
+                    target_date = target_date.replace(month=new_month)
+                except ValueError:
+                    # Day doesn't exist in the target month (e.g., Jan 31 -> Feb 31)
+                    # Go to the last day of the target month
+                    if new_month == 2:  # February
+                        last_day = 29 if target_date.year % 4 == 0 and (target_date.year % 100 != 0 or target_date.year % 400 == 0) else 28
+                    elif new_month in [4, 6, 9, 11]:  # April, June, September, November
+                        last_day = 30
+                    else:
+                        last_day = 31
+                    target_date = target_date.replace(month=new_month, day=min(target_date.day, last_day))
+        return target_date.isoformat()
+    elif unit.startswith('y'):  # years - more accurate calculation
+        # Calculate actual years back
+        try:
+            target_date = now.replace(year=now.year - amount)
+        except ValueError:
+            # Handle leap year edge case (Feb 29 in non-leap year)
+            target_date = now.replace(year=now.year - amount, day=28)
+        return target_date.isoformat()
     else:
         return now.isoformat()
     
+    # For simpler time units (seconds, minutes, hours, days, weeks)
     # Subtract from current time
     post_time = now - delta
     return post_time.isoformat()
 
+def extract_absolute_timestamp_from_media(post_element):
+    """Try to extract more accurate timestamp from media URLs or other sources."""
+    try:
+        # Look for timestamps in media URLs
+        media_urls = extract_media_urls(post_element)
+        for url in media_urls:
+            # LinkedIn media URLs often contain Unix timestamps
+            # Format: .../0/1725460448914?e=...
+            timestamp_match = re.search(r'/0/(\d{13})', url)  # 13-digit timestamp (milliseconds)
+            if timestamp_match:
+                timestamp_ms = int(timestamp_match.group(1))
+                # Verify this is a reasonable timestamp (between 2010 and 2030)
+                if 1262304000000 <= timestamp_ms <= 1893456000000:  # Jan 1 2010 to Jan 1 2030
+                    timestamp_s = timestamp_ms / 1000
+                    return datetime.fromtimestamp(timestamp_s).isoformat()
+            
+            # Also check for 10-digit timestamps (seconds)
+            timestamp_match = re.search(r'/0/(\d{10})', url)
+            if timestamp_match:
+                timestamp_s = int(timestamp_match.group(1))
+                # Verify this is a reasonable timestamp (between 2010 and 2030)
+                if 1262304000 <= timestamp_s <= 1893456000:  # Jan 1 2010 to Jan 1 2030
+                    return datetime.fromtimestamp(timestamp_s).isoformat()
+                
+    except Exception as e:
+        print(f"Error extracting timestamp from media: {e}")
+    
+    return None
+
 
 def extract_post_timestamp(post_element):
-    """Extract timestamp from a post element."""
+    """Extract timestamp from a post element with improved accuracy."""
+    # First try to get absolute timestamp from media URLs
+    media_timestamp = extract_absolute_timestamp_from_media(post_element)
+    if media_timestamp:
+        return media_timestamp
+    
     timestamp_selectors = [
         'time',
         '.update-components-actor__sub-description time',
@@ -261,7 +349,6 @@ def extract_post_timestamp(post_element):
     
     # Ultimate fallback
     return datetime.now().isoformat()
-
 
 def is_repost_or_share(post_element, expected_profile_info=None):
     """
@@ -459,7 +546,7 @@ def clean_author_title(raw_title):
 
 
 def extract_author_info(post_element):
-    """Extract author information from a post element."""
+    """Extract author information from a post element, including company logos."""
     author_info = {
         'name': '',
         'profile_url': '',
@@ -493,25 +580,82 @@ def extract_author_info(post_element):
         except NoSuchElementException:
             pass
         
-        # Extract profile picture/avatar
+        # Extract profile picture/avatar/company logo - IMPROVED VERSION
         avatar_selectors = [
+            # Individual profile avatars
             '.update-components-actor__avatar img',
             '.feed-shared-actor__avatar img',
             '.update-components-actor img[alt*="photo"]',
             '.feed-shared-actor img[alt*="photo"]',
             'img.presence-entity__image',
-            'img.EntityPhoto-circle-3'
+            'img.EntityPhoto-circle-3',
+            
+            # Company logos and organization avatars
+            '.update-components-actor__avatar img[alt*="logo"]',
+            '.feed-shared-actor__avatar img[alt*="logo"]',
+            '.update-components-actor img[alt*="Logo"]',
+            '.feed-shared-actor img[alt*="Logo"]',
+            'img.org-top-card-primary-content__logo',
+            'img[data-anonymize="company-logo"]',
+            'img.EntityPhoto-square-3',
+            'img.EntityPhoto-square-4',
+            'img.EntityPhoto-square-5',
+            
+            # Generic selectors for any avatar/logo in the actor area
+            '.update-components-actor__avatar img',
+            '.feed-shared-actor__avatar img',
+            '.update-components-actor img',
+            '.feed-shared-actor img'
         ]
         
         for selector in avatar_selectors:
             try:
                 avatar_img = post_element.find_element(By.CSS_SELECTOR, selector)
                 avatar_src = avatar_img.get_attribute('src')
-                if avatar_src and 'profile' in avatar_src.lower():
-                    author_info['avatar_url'] = avatar_src
-                    break
+                avatar_alt = avatar_img.get_attribute('alt') or ''
+                
+                if avatar_src and 'media.licdn.com' in avatar_src:
+                    # Check if this looks like a profile photo, company logo, or organization image
+                    is_avatar = any(term in avatar_src.lower() for term in ['profile', 'logo', 'company'])
+                    alt_suggests_avatar = any(term in avatar_alt.lower() for term in ['photo', 'logo', 'profile', 'company'])
+                    
+                    # Skip obvious non-avatar images
+                    skip_terms = ['reactions-icon', 'emoji', 'attachment', 'document']
+                    should_skip = any(term in avatar_src.lower() + avatar_alt.lower() for term in skip_terms)
+                    
+                    if (is_avatar or alt_suggests_avatar) and not should_skip:
+                        author_info['avatar_url'] = avatar_src
+                        print(f"    Found avatar/logo: {avatar_alt[:50]}...")
+                        break
+                        
             except NoSuchElementException:
                 continue
+        
+        # If still no avatar found, try a more aggressive search within the post element
+        if not author_info['avatar_url']:
+            try:
+                # Look for any image in the actor/header area that could be an avatar
+                all_images = post_element.find_elements(By.TAG_NAME, 'img')
+                for img in all_images:
+                    src = img.get_attribute('src')
+                    alt = img.get_attribute('alt') or ''
+                    
+                    if src and 'media.licdn.com' in src:
+                        # Check position in DOM - avatars are usually early in the post structure
+                        parent_classes = img.find_element(By.XPATH, '../..').get_attribute('class') or ''
+                        
+                        if any(term in parent_classes.lower() for term in ['actor', 'avatar', 'header']):
+                            # This might be an avatar based on its position
+                            skip_terms = ['reactions-icon', 'emoji', 'attachment', 'document', 'content-image']
+                            should_skip = any(term in src.lower() + alt.lower() for term in skip_terms)
+                            
+                            if not should_skip:
+                                author_info['avatar_url'] = src
+                                print(f"    Found avatar via DOM position: {alt[:50]}...")
+                                break
+                                
+            except Exception as e:
+                print(f"    Could not find avatar via DOM search: {e}")
         
         # Extract title/description
         title_selectors = [
@@ -592,30 +736,131 @@ def extract_post_content(post_element, post_index):
 
 
 def scrape_linkedin_channel(driver, channel_url, max_posts=50, scroll_count=10):
-    """Scrape posts from a single LinkedIn channel/profile."""
+    """Scrape posts from a single LinkedIn channel/profile with improved company page handling."""
     print(f"\nScraping: {channel_url}")
     
-    # Normalize the URL
+    # Normalize the URL (now preserves query parameters!)
     posts_url = normalize_linkedin_url(channel_url)
     print(f"Visiting: {posts_url}")
     
     driver.get(posts_url)
     
-    # Wait for posts to load
-    try:
-        WebDriverWait(driver, 15).until(
-            EC.presence_of_element_located(
-                (By.CSS_SELECTOR, 'div.feed-shared-update-v2, .artdeco-empty-state, .org-page-navigation-module__links')
+    # Special handling for company pages
+    is_company_page = '/company/' in channel_url
+    
+    if is_company_page:
+        print("  Company page detected - using extended loading strategy...")
+        
+        # For company pages, we need to wait longer and handle different scenarios
+        initial_selectors = [
+            'div.feed-shared-update-v2',           # Posts loaded
+            '.org-page-navigation-module__links',   # Company page navigation
+            '.org-page-details-module',             # Company details
+            '.artdeco-empty-state',                 # No posts state
+            '.org-company-employees-snackbar',      # Company page loaded
+            '.org-top-card-summary',                # Company header
+            'main[role="main"]'                     # Main content area
+        ]
+        
+        try:
+            WebDriverWait(driver, 45).until(  # Increased timeout for company pages
+                EC.any_of(*[EC.presence_of_element_located((By.CSS_SELECTOR, sel)) for sel in initial_selectors])
             )
-        )
-    except TimeoutException:
-        print("  ⚠ Posts didn't load within timeout")
-        return []
+            print("  ✓ Company page loaded")
+        except TimeoutException:
+            print("  ⚠ Company page didn't load within timeout")
+            # Don't return immediately, try to proceed anyway
+        
+        # Check if we need to accept cookies or dismiss overlays
+        try:
+            # Check for cookie consent
+            cookie_accept = driver.find_elements(By.CSS_SELECTOR, 'button[data-test-id="accept-cookies"], .artdeco-global-alert-action')
+            if cookie_accept:
+                cookie_accept[0].click()
+                time.sleep(2)
+                print("  ✓ Accepted cookies")
+        except Exception:
+            pass
+        
+        # Check if we're redirected or need to navigate differently
+        current_url = driver.current_url
+        if '/company/' not in current_url:
+            print(f"  ⚠ Redirected to: {current_url}")
+            # Try the original URL again
+            driver.get(posts_url)
+            time.sleep(5)
+        
+        # For company pages, try clicking on "Posts" tab if not already there
+        try:
+            posts_tab_selectors = [
+                'a[href*="/posts/"]',
+                'button[aria-label*="Posts"]',
+                '.org-page-navigation-module__links a[href*="posts"]',
+                'nav a[href*="/posts/"]'
+            ]
+            
+            for selector in posts_tab_selectors:
+                try:
+                    posts_tab = driver.find_element(By.CSS_SELECTOR, selector)
+                    if posts_tab.is_displayed() and posts_tab.is_enabled():
+                        posts_tab.click()
+                        time.sleep(3)
+                        print("  ✓ Clicked Posts tab")
+                        break
+                except (NoSuchElementException, Exception):
+                    continue
+        except Exception as e:
+            print(f"  Could not find Posts tab: {e}")
+        
+        # Wait specifically for posts to appear after clicking Posts tab
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.any_of(
+                    EC.presence_of_element_located((By.CSS_SELECTOR, 'div.feed-shared-update-v2')),
+                    EC.presence_of_element_located((By.CSS_SELECTOR, '.artdeco-empty-state')),
+                    EC.presence_of_element_located((By.CSS_SELECTOR, '.org-company-posts-module'))
+                )
+            )
+        except TimeoutException:
+            print("  ⚠ Posts still didn't load after clicking Posts tab")
+    
+    else:
+        # Regular profile page handling
+        try:
+            WebDriverWait(driver, 30).until(
+                EC.presence_of_element_located(
+                    (By.CSS_SELECTOR, 'div.feed-shared-update-v2, .artdeco-empty-state, .org-page-navigation-module__links, .org-page-details-module')
+                )
+            )
+        except TimeoutException:
+            print("  ⚠ Posts didn't load within timeout")
+            return []
 
-    # Check if profile has no visible posts
-    if driver.find_elements(By.CSS_SELECTOR, '.artdeco-empty-state'):
-        print("  ⚠ Profile appears to have no visible posts or is private")
-        return []
+    # Check if profile/company has no visible posts
+    empty_state_elements = driver.find_elements(By.CSS_SELECTOR, '.artdeco-empty-state')
+    if empty_state_elements:
+        empty_text = " ".join([el.text for el in empty_state_elements]).lower()
+        if any(phrase in empty_text for phrase in ['no posts', 'no activity', 'hasn\'t posted']):
+            print("  ⚠ Profile/Company appears to have no visible posts")
+            return []
+
+    # Debug: Print page title and URL to understand what we loaded
+    print(f"  Page title: {driver.title}")
+    print(f"  Current URL: {driver.current_url}")
+    
+    # Debug: Check what elements are actually on the page
+    debug_selectors = [
+        'div.feed-shared-update-v2',
+        '.org-company-posts-module',
+        '.artdeco-empty-state',
+        'main[role="main"]',
+        '.feed-container-theme'
+    ]
+    
+    print("  Elements found on page:")
+    for selector in debug_selectors:
+        elements = driver.find_elements(By.CSS_SELECTOR, selector)
+        print(f"    {selector}: {len(elements)} elements")
 
     # Get the expected profile information for comparison
     expected_profile_info = {'name': '', 'url_slug': ''}
@@ -627,7 +872,10 @@ def scrape_linkedin_channel(driver, channel_url, max_posts=50, scroll_count=10):
             'h1.pv-text-details__left-panel__entity-title',
             '.pv-text-details__left-panel h1',
             'h1[data-anonymize="person-name"]',
-            '.ph5 h1'
+            '.ph5 h1',
+            '.org-top-card-summary__title',  # Company page title
+            '.org-top-card-summary-info-list h1',  # Alternative company title
+            'h1.org-top-card-summary__title'  # Another company title selector
         ]
         
         for selector in profile_name_selectors:
@@ -645,47 +893,28 @@ def scrape_linkedin_channel(driver, channel_url, max_posts=50, scroll_count=10):
         # Extract URL slug as backup
         expected_profile_info['url_slug'] = get_profile_name_from_url(channel_url)
         
-        # If we couldn't get profile name from page, try to navigate to main profile
-        if not expected_profile_info['name']:
-            try:
-                # Go to main profile page to get the name
-                main_profile_url = channel_url.split('/recent-activity')[0] if '/recent-activity' in channel_url else channel_url
-                driver.get(main_profile_url)
-                time.sleep(3)
-                
-                for selector in profile_name_selectors:
-                    try:
-                        name_element = WebDriverWait(driver, 5).until(
-                            EC.presence_of_element_located((By.CSS_SELECTOR, selector))
-                        )
-                        expected_profile_info['name'] = name_element.text.strip()
-                        if expected_profile_info['name']:
-                            print(f"  Profile name detected: {expected_profile_info['name']}")
-                            # Go back to activity page
-                            driver.get(posts_url)
-                            time.sleep(2)
-                            break
-                    except (TimeoutException, NoSuchElementException):
-                        continue
-            except Exception as e:
-                print(f"  Warning: Could not get profile name from main page: {e}")
-        
     except Exception as e:
         print(f"  Warning: Could not extract profile info: {e}")
 
-    # Scroll to load more posts
-    print(f"  Scrolling {scroll_count} times to load posts...")
+    # Scroll to load more posts - be more aggressive for company pages
+    scroll_pause = 3 if is_company_page else 2
+    print(f"  Scrolling {scroll_count} times to load posts (pause: {scroll_pause}s)...")
+    
     for i in range(scroll_count):
         driver.find_element(By.TAG_NAME, 'body').send_keys(Keys.END)
-        time.sleep(2)
+        time.sleep(scroll_pause)
+        
+        # Check if new posts loaded during scrolling
         if i % 3 == 0:
-            print(f"    Scroll {i+1}/{scroll_count}")
+            posts_count = len(driver.find_elements(By.CSS_SELECTOR, 'div.feed-shared-update-v2'))
+            print(f"    Scroll {i+1}/{scroll_count} - Posts found: {posts_count}")
 
-    # Find all post elements
+    # Find all post elements with multiple selectors
     post_selectors = [
         'div.feed-shared-update-v2',
         'div[data-urn*="activity"]',
-        '.update-components-actor'
+        '.update-components-actor',
+        '.org-company-posts-module .feed-shared-update-v2'  # Company-specific
     ]
 
     all_posts = []
@@ -698,6 +927,19 @@ def scrape_linkedin_channel(driver, channel_url, max_posts=50, scroll_count=10):
 
     if not all_posts:
         print("  ⚠ No posts found")
+        
+        # Final debug attempt - screenshot and HTML dump for debugging
+        if is_company_page:
+            try:
+                print("  Saving debug screenshot...")
+                driver.save_screenshot("debug_company_page.png")
+                
+                with open("debug_company_page.html", "w", encoding="utf-8") as f:
+                    f.write(driver.page_source)
+                print("  Debug files saved: debug_company_page.png, debug_company_page.html")
+            except Exception as e:
+                print(f"  Could not save debug files: {e}")
+        
         return []
 
     # Extract content from posts
@@ -795,7 +1037,7 @@ Examples:
         print("Error: No valid channel URLs provided")
         sys.exit(1)
 
-    print(f"LinkedIn Post Scraper v2.1 (Original posts only)")
+    print(f"LinkedIn Post Scraper v2.2 (Fixed Company URL Handling)")
     print(f"Channels to scrape: {len(channel_urls)}")
     print(f"Max posts per channel: {args.max_posts}")
     print(f"Output file: {args.output}")
